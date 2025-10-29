@@ -7,6 +7,7 @@ namespace JsonPlus;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 /// <summary>
@@ -60,7 +61,7 @@ public class JsonTriviaCollection : List<JsonTrivia>
     }
 }
 
-public abstract class JsonValue
+public abstract class JsonValue : IEquatable<JsonValue>
 {
     public JsonTriviaCollection LeadingTrivia { get; set; } = [];
 
@@ -90,6 +91,8 @@ public abstract class JsonValue
 
     public virtual JsonNull GetNullValue() => throw new InvalidOperationException($"Value is not null (actual type: {Kind})");
 
+    public virtual ICollection<JsonProperty> GetProperties() => throw new InvalidOperationException($"Value is not an object (actual type: {Kind})");
+
     public virtual JsonProperty GetProperty(string key) => throw new InvalidOperationException($"Value is not an object (actual type: {Kind})");
 
     public virtual JsonValue GetPropertyValue(string key) => throw new InvalidOperationException($"Value is not an object (actual type: {Kind})");
@@ -113,25 +116,12 @@ public abstract class JsonValue
     public virtual JsonValue RemoveItem(JsonValue item) => throw new InvalidOperationException($"Value is not an array (actual type: {Kind})");
 
     public virtual JsonValue RemoveItemAt(int index) => throw new InvalidOperationException($"Value is not an array (actual type: {Kind})");
-}
 
-public sealed class JsonProperty
-{
-    public JsonString Key { get; set; }
+    public override int GetHashCode() => throw new NotImplementedException();
 
-    public JsonValue Value { get; set; }
+    public override bool Equals(object? obj) => throw new NotImplementedException();
 
-    public JsonProperty(JsonString key, JsonValue value) => (Key, Value) = (key, value);
-
-    public JsonProperty(string key, JsonValue value) => (Key, Value) = (new JsonString(key), value);
-
-    public JsonValue GetValue() => Value;
-
-    public JsonProperty SetValue(JsonValue newValue)
-    {
-        Value = newValue;
-        return this;
-    }
+    public bool Equals(JsonValue? other) => other is not null && Kind == other.Kind && other.Equals(this as object);
 }
 
 public sealed class JsonString : JsonValue, IEquatable<string>, IEquatable<JsonString>
@@ -189,11 +179,11 @@ public sealed class JsonNumber : JsonValue, IEquatable<double>, IEquatable<JsonN
 
     public override int GetHashCode() => value.GetHashCode();
 
-    public override bool Equals(object? obj) => Equals(obj as JsonString);
+    public override bool Equals(object? obj) => Equals(obj as JsonNumber);
 
     public bool Equals(double other) => value.Equals(other);
 
-    public bool Equals(JsonNumber? other) => other is not null && value.Equals(other.value);
+    public bool Equals(JsonNumber? other) => other is not null && rawValue.Equals(other.rawValue, StringComparison.Ordinal);
 }
 
 public sealed class JsonBoolean : JsonValue, IEquatable<bool>, IEquatable<JsonBoolean>
@@ -212,7 +202,7 @@ public sealed class JsonBoolean : JsonValue, IEquatable<bool>, IEquatable<JsonBo
 
     public override int GetHashCode() => Value.GetHashCode();
 
-    public override bool Equals(object? obj) => Equals(obj as JsonString);
+    public override bool Equals(object? obj) => Equals(obj as JsonBoolean);
 
     public bool Equals(bool other) => Value.Equals(other);
 
@@ -235,7 +225,7 @@ public sealed class JsonNull : JsonValue, IEquatable<JsonNull>
 
     public override int GetHashCode() => 0;
 
-    public override bool Equals(object? obj) => Equals(obj as JsonString);
+    public override bool Equals(object? obj) => Equals(obj as JsonNull);
 
     public bool Equals(JsonNull? other) => other is not null;
 }
@@ -345,7 +335,7 @@ public class JsonArray : JsonValue, IList<JsonValue>, IEquatable<JsonArray>
         {
             return false;
         }
-        for (int i = 0; i < Count; i++)
+        for (var i = 0; i < Count; i++)
         {
             if (!Items[i].Equals(other.Items[i]))
             {
@@ -365,6 +355,25 @@ public class JsonArray : JsonValue, IList<JsonValue>, IEquatable<JsonArray>
     }
 }
 
+public sealed class JsonProperty
+{
+    public JsonString Key { get; set; }
+
+    public JsonValue Value { get; set; }
+
+    public JsonProperty(JsonString key, JsonValue value) => (Key, Value) = (key, value);
+
+    public JsonProperty(string key, JsonValue value) => (Key, Value) = (new JsonString(key), value);
+
+    public JsonValue GetValue() => Value;
+
+    public JsonProperty SetValue(JsonValue newValue)
+    {
+        Value = newValue;
+        return this;
+    }
+}
+
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1710:Identifiers should have correct suffix", Justification = "not using 'Collection' suffix for consistency with other types")]
 public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonProperty>, IEquatable<JsonObject>
 {
@@ -376,15 +385,23 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
 
     public override bool IsPrimitive => false;
 
-    public override JsonObject GetObjectValue() => this;
+    public int Count => items.Count;
+
+    public bool IsReadOnly => false;
 
     public ICollection<string> Keys => items.Keys;
 
     public ICollection<JsonValue> Values => [.. items.Values.Select(it => it.Value)];
 
-    public int Count => items.Count;
+    public override JsonObject GetObjectValue() => this;
 
-    public bool IsReadOnly => false;
+    public override ICollection<JsonProperty> GetProperties() => sequence.AsReadOnly();
+
+    public IEnumerator<KeyValuePair<string, JsonValue>> GetEnumerator() => items.Select(kv => new KeyValuePair<string, JsonValue>(kv.Key, kv.Value.Value)).GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    IEnumerator<JsonProperty> IEnumerable<JsonProperty>.GetEnumerator() => sequence.GetEnumerator();
 
     public JsonProperty this[int index]
     {
@@ -435,6 +452,49 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
         throw new KeyNotFoundException($"The given key '{key}' was not present in the JsonObject.");
     }
 
+    public bool TryGetValue(string key, [MaybeNullWhen(false)] out JsonValue value)
+    {
+        if (items.TryGetValue(key, out var prop))
+        {
+            value = prop.Value;
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    public int IndexOf(JsonProperty item)
+    {
+        return sequence.IndexOf(item);
+    }
+
+    public bool ContainsKey(string key)
+    {
+        return items.ContainsKey(key);
+    }
+
+    public bool Contains(KeyValuePair<string, JsonValue> item)
+    {
+        if (items.TryGetValue(item.Key, out var prop))
+        {
+            return EqualityComparer<JsonValue>.Default.Equals(prop.Value, item.Value);
+        }
+        return false;
+    }
+
+    public bool Contains(JsonProperty prop)
+    {
+        if (!items.TryGetValue(prop.Key.Value, out var item))
+        {
+            return false;
+        }
+        if (!EqualityComparer<JsonValue>.Default.Equals(item.Value, prop.Value))
+        {
+            return false;
+        }
+        return true;
+    }
+
     public override JsonValue SetProperty(string key, JsonValue value)
     {
         this[key] = value;
@@ -445,28 +505,6 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
     {
         Add(key, value);
         return this;
-    }
-
-    public override JsonValue InsertProperty(int index, JsonProperty prop)
-    {
-        Insert(index, prop);
-        return this;
-    }
-
-    public override JsonValue RemoveProperty(string key)
-    {
-        Remove(key);
-        return this;
-    }
-
-    /// <summary>
-    /// Used  during parsing to add items without modifying trivia.
-    /// </summary>
-    /// <param name="prop">The property to add.</param>
-    internal void AddParsedProperty(JsonProperty prop)
-    {
-        items[prop.Key.Value] = prop;
-        sequence.Add(prop);
     }
 
     public void Add(KeyValuePair<string, JsonValue> item)
@@ -493,6 +531,19 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
         sequence.Add(prop);
     }
 
+    internal void AddParsedProperty(JsonProperty prop)
+    {
+        // Used  during parsing to add items without modifying trivia.
+        items[prop.Key.Value] = prop;
+        sequence.Add(prop);
+    }
+
+    public override JsonValue InsertProperty(int index, JsonProperty prop)
+    {
+        Insert(index, prop);
+        return this;
+    }
+
     public void Insert(int index, JsonProperty prop)
     {
         if (index >= 0 && index <= sequence.Count)
@@ -503,9 +554,16 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
         items[prop.Key.Value] = prop;
     }
 
-    public bool ContainsKey(string key)
+    public void Clear()
     {
-        return items.ContainsKey(key);
+        items.Clear();
+        sequence.Clear();
+    }
+
+    public override JsonValue RemoveProperty(string key)
+    {
+        Remove(key);
+        return this;
     }
 
     public bool Remove(string key)
@@ -523,37 +581,6 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
         return false;
     }
 
-    public bool TryGetValue(string key, out JsonValue value)
-    {
-        if (items.TryGetValue(key, out var prop))
-        {
-            value = prop.Value;
-            return true;
-        }
-        value = JsonNull.Instance;
-        return false;
-    }
-
-    public void Clear()
-    {
-        items.Clear();
-        sequence.Clear();
-    }
-
-    public bool Contains(KeyValuePair<string, JsonValue> item)
-    {
-        if (items.TryGetValue(item.Key, out var prop))
-        {
-            return EqualityComparer<JsonValue>.Default.Equals(prop.Value, item.Value);
-        }
-        return false;
-    }
-
-    public void CopyTo(KeyValuePair<string, JsonValue>[] array, int arrayIndex)
-    {
-        ((ICollection<KeyValuePair<string, JsonValue>>)items).CopyTo(array, arrayIndex);
-    }
-
     public bool Remove(KeyValuePair<string, JsonValue> item)
     {
         if (Contains(item))
@@ -563,54 +590,16 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
         return false;
     }
 
-    public IEnumerator<KeyValuePair<string, JsonValue>> GetEnumerator()
-    {
-        return items.Select(kv => new KeyValuePair<string, JsonValue>(kv.Key, kv.Value.Value)).GetEnumerator();
-    }
-
-    IEnumerator IEnumerable.GetEnumerator()
-    {
-        return GetEnumerator();
-    }
-
-    public int IndexOf(JsonProperty item)
-    {
-        return sequence.IndexOf(item);
-    }
-
-    public void RemoveAt(int index)
-    {
-        items.Remove(sequence[index].Key.Value);
-        sequence.RemoveAt(index);
-    }
-
-    public bool Contains(JsonProperty prop)
-    {
-        if (!items.TryGetValue(prop.Key.Value, out var item))
-        {
-            return false;
-        }
-        if (!EqualityComparer<JsonValue>.Default.Equals(item.Value, prop.Value))
-        {
-            return false;
-        }
-        return true;
-    }
-
-    public void CopyTo(JsonProperty[] array, int arrayIndex)
-    {
-        sequence.CopyTo(array, arrayIndex);
-    }
-
     public bool Remove(JsonProperty item)
     {
         items.Remove(item.Key.Value);
         return sequence.Remove(item);
     }
 
-    IEnumerator<JsonProperty> IEnumerable<JsonProperty>.GetEnumerator()
+    public void RemoveAt(int index)
     {
-        return sequence.GetEnumerator();
+        items.Remove(sequence[index].Key.Value);
+        sequence.RemoveAt(index);
     }
 
     public override int GetHashCode()
@@ -637,6 +626,16 @@ public class JsonObject : JsonValue, IDictionary<string, JsonValue>, IList<JsonP
             }
         }
         return true;
+    }
+
+    public void CopyTo(JsonProperty[] array, int arrayIndex)
+    {
+        sequence.CopyTo(array, arrayIndex);
+    }
+
+    public void CopyTo(KeyValuePair<string, JsonValue>[] array, int arrayIndex)
+    {
+        ((ICollection<KeyValuePair<string, JsonValue>>)items).CopyTo(array, arrayIndex);
     }
 
     private static void CopyTrivia(JsonProperty src, JsonProperty dst, bool isLast)

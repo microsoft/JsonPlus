@@ -81,6 +81,17 @@ public class RoundTripTests
     }
 
     [TestMethod]
+    public void RoundTripEncodeDecodeString()
+    {
+        var c1 = char.ConvertFromUtf32(1); // control character
+        var c2 = char.ConvertFromUtf32(0x1F600); // 😀
+        var s = $"test\\\b\f\n\r\t\"value\"{c1}{c2}";
+        var j = JsonCodec.Encode(new JsonString(s));
+        var d = JsonCodec.Decode(j);
+        Assert.AreEqual(s, d.GetString());
+    }
+
+    [TestMethod]
     public void DecodeReturnsSameValuesAsSystemTextJson()
     {
         var options = new System.Text.Json.JsonDocumentOptions
@@ -147,7 +158,7 @@ public class RoundTripTests
         {
             return false;
         }
-        for (int i = 0; i < expectedItems.Count; i++)
+        for (var i = 0; i < expectedItems.Count; i++)
         {
             if (!Compare(expectedItems[i], actual[i]))
             {
