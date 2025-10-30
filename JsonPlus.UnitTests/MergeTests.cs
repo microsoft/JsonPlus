@@ -520,10 +520,6 @@ public class MergeTests
         var baseValue = JsonCodec.Decode(baseJson);
         var overrideValue = JsonCodec.Decode(overrideJson);
 
-        var bv3 = baseValue.GetArrayValue()[2];
-        var ov3 = overrideValue.GetArrayValue()[0];
-        var eqr = bv3.Equals(ov3);
-
         JsonCodec.MergeInPlace(baseValue, overrideValue, JsonCodec.ArrayMergeMode.Union);
         var array = baseValue.GetArrayValue();
 

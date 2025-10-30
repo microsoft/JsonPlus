@@ -177,11 +177,11 @@ public sealed class JsonNumber : JsonValue, IEquatable<double>, IEquatable<JsonN
 
     public override JsonNumber GetNumberValue() => this;
 
-    public override int GetHashCode() => value.GetHashCode();
+    public override int GetHashCode() => rawValue.GetHashCode();
 
     public override bool Equals(object? obj) => Equals(obj as JsonNumber);
 
-    public bool Equals(double other) => value.Equals(other);
+    public bool Equals(double other) => rawValue.Equals(other);
 
     public bool Equals(JsonNumber? other) => other is not null && rawValue.Equals(other.rawValue, StringComparison.Ordinal);
 }
